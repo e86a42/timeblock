@@ -14,10 +14,8 @@
           <div class="topbar-subtitle">2D video → stacked time volume</div>
         </div>
         <div class="topbar-right">
-          <select class="sel" id="preset" disabled title="프리셋은 M5에서 연결됩니다">
-            <option>Preset</option>
-          </select>
-          <button class="btn btn--accent" id="export-btn" disabled title="MP4 내보내기는 M3에서 연결됩니다">Export ▶</button>
+          <select class="sel" id="preset"></select>
+          <button class="btn btn--accent" id="export-btn" disabled>Export ▶</button>
         </div>
       </header>
 
@@ -35,6 +33,7 @@
           <section class="panel-section hidden" id="range-section">
             <div class="section-title static"><span>Time range</span></div>
             <div id="range-ctrls"></div>
+            <button class="btn btn--sm btn--block hidden" id="match-fps" type="button">원본 프레임 전부 사용</button>
             <div id="sample-info" class="note mono"></div>
           </section>
           <section class="panel-section hidden" id="thumb-section">
@@ -46,6 +45,7 @@
         <section id="stage">
           <div id="viewport">
             <canvas id="gl"></canvas>
+            <canvas id="overlay"></canvas>
             <div id="empty" class="overlay">
               <div class="empty-mark">TIME<span>.</span>BLOCK</div>
               <p>왼쪽 패널이나 이 화면에 MP4를 놓으면 프레임을 시간축으로 쌓습니다.</p>
@@ -66,10 +66,7 @@
         <button class="tl-play" id="tl-play" aria-label="Pause"></button>
         <input type="range" id="tl-scrub" min="0" max="1000" step="1" value="0" />
         <span id="tl-time" class="mono">0.00 / 0.00</span>
-        <span class="toggle-row tl-pip disabled" title="원본 PIP는 M5에서 연결됩니다">
-          <label>원본 PIP</label>
-          <span class="toggle"><input type="checkbox" disabled /><span class="toggle-track"></span><span class="toggle-thumb"></span></span>
-        </span>
+        <div id="tl-pip" class="tl-pip"></div>
       </footer>
     </div>
     <script type="module" src="/src/main.ts"></script>

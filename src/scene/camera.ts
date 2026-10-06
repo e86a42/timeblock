@@ -86,13 +86,20 @@ export class CameraRig {
    * untouched); dolly temporarily moves the camera — call the returned fn after rendering.
    */
   animate(u: number, p: Params, group: THREE.Object3D): () => void {
-    const a = p.camera.animation;
-    const orbit = a === 'orbit' || a === 'orbit+dolly';
-    // Sweep centred on the chosen view; from 사선 45° this opens on the frame face and ends side-on.
-    group.rotation.y = orbit ? THREE.MathUtils.degToRad((0.5 - u) * p.camera.orbitAngle) : 0;
+    const c = p.camera;
+    const a = c.animation;
+    if (a === 'orbit' || a === 'orbit+dolly') {
+      // Camera angle θ(u) relative to the view; spinning the stack by −θ is the same shot.
+      // CCW (seen from above) is positive about +Y. Default −45° → +45° from 사선 45° runs front → side.
+      const e = c.orbitEase === 'ease' ? smooth(u) : u;
+      const theta = c.orbitStart + (c.orbitDir === 'ccw' ? 1 : -1) * c.orbitAngle * e;
+      group.rotation.y = -THREE.MathUtils.degToRad(theta);
+    } else {
+      group.rotation.y = 0;
+    }
     if (a !== 'dolly' && a !== 'orbit+dolly') return () => {};
 
-    const factor = THREE.MathUtils.lerp(1.12, 0.78, smooth(u));
+    const factor = THREE.MathUtils.lerp(c.dollyFrom, c.dollyTo, smooth(u));
     const cam = this.camera;
     const saved = cam.position.clone();
     const savedZoom = cam.zoom;

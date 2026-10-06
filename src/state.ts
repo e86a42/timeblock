@@ -14,32 +14,57 @@ export const DEFAULTS = {
     gradient: false,
     gradTop: '#1A1F2B',
     gradBottom: '#0B0D10',
-    sourceBg: true, // On = full frame planes, Off = subject only (M4)
+    sourceBg: true, // On = full frame planes, Off = subject only
   },
   block: {
     intensity: 0.6,
-    frameCount: 60,
+    frameCount: 120,
+    subframes: 3, // interpolated slices per sampled frame, for a continuous volume
     inT: 0,
     outT: 0, // 0 → end of clip (resolved on load)
-    spacing: 2, // % of screen height per frame
+    spacing: 1, // % of screen height per sampled frame
     opacity: 0.15,
     falloff: 0.5,
+    falloffCurve: 1, // exponent on frame age: <1 fades early, >1 keeps old frames longer
+    heroOpacity: 1,
+    intensityToSpacing: 1, // how strongly Intensity scales Spacing (0 = not at all)
+    intensityToOpacity: 1, // how strongly Intensity scales Opacity
     blend: 'additive' as 'normal' | 'additive',
     colorOverTime: false,
     colorStart: '#FF6B2B',
     colorEnd: '#4A9EFF',
     feather: 4,
     highlight: true,
+    heroFullFrame: false, // with Source background Off, keep the current frame's background
     bbox: false,
     bboxColor: '#F2F0EB',
+  },
+  subject: {
+    model: 'general' as 'general' | 'person',
+    anchor: 'none' as 'none' | 'center' | 'ground',
+    anchorStrength: 1,
   },
   camera: {
     projection: 'perspective' as 'perspective' | 'orthographic',
     fov: 35,
     view: 'oblique' as ViewPreset,
     animation: 'orbit' as 'none' | 'orbit' | 'dolly' | 'orbit+dolly',
-    orbitAngle: 90,
+    orbitStart: -45, // degrees relative to the view, at t = 0
+    orbitAngle: 90, // sweep over the whole duration
+    orbitDir: 'ccw' as 'ccw' | 'cw',
+    orbitEase: 'linear' as 'linear' | 'ease',
+    dollyFrom: 1.12,
+    dollyTo: 0.78,
     playback: 'buildup' as 'buildup' | 'static',
+    buildTime: 5, // seconds until the block is complete (then it holds)
+    buildAuto: true, // follows Duration until the user edits it
+  },
+  pip: {
+    enabled: false,
+    corner: 'tl' as 'tl' | 'tr' | 'bl' | 'br',
+    size: 0.3, // fraction of output width
+    trackBox: true,
+    boxColor: '#FF6B2B',
   },
   export: {
     format: 'mp4' as 'mp4' | 'webm',
@@ -72,6 +97,17 @@ class Store {
     this.listeners.forEach((l) => l(path));
   }
 
+  /** Apply a (partial) params object leaf by leaf; unknown keys and wrong types are ignored. */
+  load(src: unknown, base: any = DEFAULTS, prefix = '') {
+    if (!src || typeof src !== 'object') return;
+    for (const [k, v] of Object.entries(src as Record<string, unknown>)) {
+      if (!(k in base)) continue;
+      const path = prefix + k;
+      if (typeof base[k] === 'object') this.load(v, base[k], `${path}.`);
+      else if (typeof v === typeof base[k]) this.set(path, v);
+    }
+  }
+
   on(l: Listener) {
     this.listeners.add(l);
     return () => this.listeners.delete(l);
@@ -91,7 +127,14 @@ export function outputSize(c: Params['canvas']): { w: number; h: number } {
     : { w: even(short), h: even((short * b) / a) };
 }
 
-/** Intensity is a master scaler: 0.6 is neutral (×1), 0 flattens, 1 ≈ ×1.67. */
-export function intensityScale(p: Params) {
-  return p.block.intensity / DEFAULTS.block.intensity;
+/**
+ * Intensity is a master scaler: 0.6 is neutral (×1), 0 flattens, 1 ≈ ×1.67.
+ * Each linked parameter blends between "unaffected" (weight 0) and the full scale (weight 1).
+ */
+export function intensityScales(p: Params) {
+  const k = p.block.intensity / DEFAULTS.block.intensity;
+  const lerp = (w: number) => 1 + (k - 1) * w;
+  return { spacing: lerp(p.block.intensityToSpacing), opacity: lerp(p.block.intensityToOpacity) };
 }
+
+export const clamp01 = (v: number) => Math.min(1, Math.max(0, v));

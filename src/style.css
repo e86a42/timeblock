@@ -165,3 +165,11 @@ body.dragging #viewport { box-shadow: 0 0 0 2px var(--c-accent); }
 .tl-play.playing::before { left: 10px; top: 10px; width: 3px; height: 12px; border: none; background: var(--c-text-1); box-shadow: 7px 0 0 var(--c-text-1); }
 #tl-time { font-size: 11px; color: var(--c-text-2); width: 96px; text-align: right; }
 .tl-pip { margin: 0; gap: 8px; }
+
+/* ── Added: sub-headings, overlays, busy state ── */
+.subhead { font-size: 9px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--c-text-3); margin: 14px 0 8px; padding-top: 10px; border-top: 1px solid var(--c-border); }
+.btn--block { width: 100%; margin: 4px 0 10px; }
+#overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+body.busy #left, body.busy #right, body.busy #topbar, body.busy #timeline { pointer-events: none; opacity: 0.5; }
+.tl-pip .toggle-row { margin: 0; gap: 8px; }
+#sample-info { white-space: pre-line; }

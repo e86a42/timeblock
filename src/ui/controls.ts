@@ -83,9 +83,10 @@ export function seg(parent: HTMLElement, label: string, path: string, options: [
   return { row: r };
 }
 
+let toggleSeq = 0;
 export function toggle(parent: HTMLElement, label: string, path: string) {
   const r = el('div', 'toggle-row', parent);
-  const id = `t-${path.replace(/\./g, '-')}`;
+  const id = `t-${path.replace(/\./g, '-')}-${++toggleSeq}`; // one path may have several toggles
   r.innerHTML = `<label for="${id}">${label}</label><span class="toggle"><input type="checkbox" id="${id}"><span class="toggle-track"></span><span class="toggle-thumb"></span></span>`;
   const input = r.querySelector('input')!;
   r.querySelector('.toggle')!.addEventListener('click', (e) => {
@@ -140,6 +141,13 @@ export function text(parent: HTMLElement, label: string, path: string, placehold
   input.addEventListener('change', () => store.set(path, input.value.trim()));
   bind(() => (input.value = store.get<string>(path)));
   return { row: r, input };
+}
+
+/** Small heading that groups related rows inside a section. */
+export function subhead(parent: HTMLElement, label: string) {
+  const h = el('div', 'subhead', parent);
+  h.textContent = label;
+  return h;
 }
 
 export function note(parent: HTMLElement, cls = 'note') {

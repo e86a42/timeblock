@@ -1,12 +1,12 @@
 # TIME.BLOCK
 
-2D 영상(MP4)의 시간축을 z축으로 바꿔 프레임을 적층한 3D "Time Block"으로 시각화하는 브라우저 웹앱.
-모든 처리는 브라우저 로컬에서 수행한다. 명세: `TIMEBLOCK_WEBAPP_SPEC.md`.
+2D 영상(MP4)의 시간축을 z축으로 바꿔 프레임을 적층한 3D "Time Block"으로 시각화하고 MP4로 내보내는 브라우저 웹앱.
+영상 처리는 모두 브라우저 로컬에서 수행한다 (세그멘테이션 모델 파일만 Google CDN에서 받음). 명세: `TIMEBLOCK_WEBAPP_SPEC.md`.
 
 ## 실행
 
 ```bash
-npm install
+npm install      # postinstall이 MediaPipe wasm을 public/mediapipe로 복사
 npm run dev      # http://localhost:5173
 npm run build    # 타입 체크 + dist/ 정적 빌드 (Netlify)
 ```
@@ -20,28 +20,37 @@ npm run build    # 타입 체크 + dist/ 정적 빌드 (Netlify)
 |---|---|---|
 | M1 | 셋업, MP4 업로드·디코딩, 배경 On 적층 미리보기 | 완료 |
 | M2 | 파라미터 창(Canvas·Time Block·Camera), 화면 비율·배경색 | 완료 |
-| M3 | MP4 내보내기 (오프라인 렌더 + Mediabunny) | 예정 |
-| M4 | 배경 Off (MediaPipe 마스크) + Mask feather | 예정 |
-| M5 | Anchor 정렬, PIP, 프리셋 | 예정 (카메라 애니메이션은 M2에서 선구현) |
+| M3 | MP4 내보내기 (오프라인 렌더 + Mediabunny, WebM 대체) | 완료 |
+| M4 | 배경 Off (MediaPipe 마스크) + Mask feather | 완료 |
+| M5 | Anchor 정렬, 카메라 애니메이션, 원본 PIP + 추적 박스, 프리셋 | 완료 |
+| P2 | 깊이 기반 적층, Unfold, PNG/OBJ 내보내기 | 미착수 |
 
 ## 구조
 
 ```
 src/
-├─ main.ts            앱 연결: 렌더 루프, 파일 로드, 상태 → 씬 반영
-├─ state.ts           모든 파라미터의 단일 상태 저장소 + 출력 해상도 계산
-├─ io/decode.ts       <video> 시크 기반 균등 프레임 샘플링 → RGBA 버퍼
-├─ scene/stack.ts     DataArrayTexture + 인스턴싱 평면 적층, 현재 프레임 강조
-├─ scene/shaders/     적층 셰이더 (알파 · 감쇠 · 색조 · Build-up)
-├─ scene/camera.ts    Persp/Ortho, 뷰 프리셋 맞춤, Orbit/Dolly 애니메이션
-└─ ui/                controls.ts(바인딩 컨트롤), panel.ts, timeline.ts
+├─ main.ts             앱 연결: 샘플링 → 마스크 → 정렬 → 렌더, 미리보기/내보내기 공용 renderAt(t)
+├─ state.ts            모든 파라미터의 단일 상태 저장소, 출력 해상도, Intensity 스케일
+├─ io/decode.ts        Mediabunny(WebCodecs) 프레임 샘플링, 실패 시 <video> 시크로 대체
+├─ io/exportMp4.ts     오프라인 렌더 → CanvasSource → MP4(H.264) / WebM(VP9)
+├─ vision/segment.ts   MediaPipe Image Segmenter (VIDEO 모드), 첫 사용 시 지연 로드
+├─ vision/align.ts     마스크 통계(무게중심·하단·bbox), Anchor 오프셋
+├─ scene/stack.ts      DataArrayTexture + 인스턴싱 슬라이스, 프레임 사이 보간
+├─ scene/shaders/      적층 셰이더 (보간 · 마스크/Feather · 감쇠 · 색조 · Build-up · Anchor)
+├─ scene/camera.ts     Persp/Ortho, 뷰 프리셋, Orbit/Dolly 애니메이션
+├─ scene/pip.ts        원본 PIP + 추적 박스 (미리보기·출력 동일)
+└─ ui/                 controls.ts(바인딩 컨트롤), panel.ts, timeline.ts, presets.ts
 ```
 
-## 구현 결정 (검토 필요)
+## 동작 메모
 
-- **Intensity**: 0.6을 기준(×1)으로 Spacing·Opacity를 선형 스케일 (0 → 납작/투명, 1 → ×1.67).
-- **Opacity falloff**: `opacity × (1 − falloff × age)`, age는 최신 프레임 0 → 가장 오래된 프레임 1.
-- **Orbit**: 선택한 View를 중심으로 ±angle/2 회전. 사선 45° + 90°이면 정면에서 시작해 측면으로 끝남.
-- **Dolly**: 거리 ×1.12 → ×0.78 (smoothstep).
-- **Build-up**: 재생 구간 전체에 걸쳐 선형으로 적층되며 마지막 프레임에서 완성.
-- **작업 해상도**: 긴 변 720px, 프레임 버퍼 합계 512MB 초과 시 자동 축소 후 경고.
+- **보간(Interpolate)**: 샘플 프레임 사이에 슬라이스를 ×N으로 채워 연속된 볼륨처럼 보이게 함. 슬라이스별 불투명도는
+  `1 − (1 − a)^(1/N)`이라 N을 바꿔도 전체 밀도는 같다. 프레임 수는 최대 600, "원본 프레임 전부 사용" 버튼 제공.
+- **Intensity**: 0.6 기준(×1). `Int→Opacity`, `Int→Spacing`으로 각 항목에 대한 영향도를 0–1로 조절.
+- **Opacity**: Opacity(프레임당) · Falloff · Curve(감쇠 지수) · 현재 프레임 Opacity · 현재 프레임 배경 유지.
+- **Orbit**: Start(시작 각도) · Angle(회전량) · Direction · Easing. Dolly는 From/To 배율.
+- **Build-up**: 초 단위. 완성 후 Duration 끝까지 유지. 기본은 Duration 연동, 슬라이더를 만지면 고정.
+- **마스크 모델**: General(DeepLab v3, 테이블·의자 등 배경 사물 제외) / Person(Selfie multiclass).
+  배경 Off · Anchor · PIP 추적 박스 중 하나를 처음 켤 때 1회 계산하고, 샘플링이 바뀌면 다시 계산.
+- **내보내기**: 미리보기와 같은 `renderAt(t)`로 프레임마다 렌더 후 인코딩 → 해상도·FPS·길이가 설정값과 정확히 일치.
+  H.264 미지원 시 WebM으로 대체, WebCodecs 자체가 없으면 버튼 비활성화 + 사유 표시.
