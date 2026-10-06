@@ -173,3 +173,27 @@ body.dragging #viewport { box-shadow: 0 0 0 2px var(--c-accent); }
 body.busy #left, body.busy #right, body.busy #topbar, body.busy #timeline { pointer-events: none; opacity: 0.5; }
 .tl-pip .toggle-row { margin: 0; gap: 8px; }
 #sample-info { white-space: pre-line; }
+
+/* ── Preset manager dialog ── */
+.preset-dialog {
+  margin: auto; width: 420px; max-height: 70vh; padding: 14px 16px 16px; border-radius: var(--r-md);
+  background: var(--c-surface); color: var(--c-text-1); border: 1px solid var(--c-border-2);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+.preset-dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
+.pd-head { display: flex; align-items: center; justify-content: space-between; }
+.pd-head .section-title { margin: 0; }
+.pd-close { background: none; border: none; color: var(--c-text-3); cursor: pointer; font-size: 13px; }
+.pd-close:hover { color: var(--c-text-1); }
+.pd-save { display: flex; gap: 6px; margin: 12px 0 6px; }
+.pd-save .txt { height: 32px; font-size: 12px; }
+.pd-save .btn { height: 32px; min-width: 76px; }
+.pd-hint { margin: 0 0 12px; }
+.pd-list { list-style: none; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; max-height: 44vh; }
+.pd-list li { display: grid; grid-template-columns: 1fr auto auto auto; grid-template-rows: auto auto; column-gap: 4px; align-items: center; padding: 8px 10px; border-radius: var(--r-sm); background: var(--c-surface-2); }
+.pd-list li .btn { grid-row: 1 / 3; }
+.pd-name { grid-column: 1; grid-row: 1; font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-date { grid-column: 1; grid-row: 2; font-size: 10px; color: var(--c-text-3); }
+.pd-del:hover { color: var(--c-red); border-color: var(--c-red); }
+.pd-list li.pd-empty { display: block; font-size: 11px; color: var(--c-text-3); background: none; text-align: center; padding: 16px; }
+#preset { width: 170px; }

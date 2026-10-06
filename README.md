@@ -50,6 +50,9 @@ src/
 - **Opacity**: Opacity(프레임당) · Falloff · Curve(감쇠 지수) · 현재 프레임 Opacity · 현재 프레임 배경 유지.
 - **Orbit**: Start(시작 각도) · Angle(회전량) · Direction · Easing. Dolly는 From/To 배율.
 - **Build-up**: 초 단위. 완성 후 Duration 끝까지 유지. 기본은 Duration 연동, 슬라이더를 만지면 고정.
+- **프리셋**: Preset 메뉴 → "현재 설정을 프리셋으로 저장…"으로 이름을 붙여 브라우저(localStorage)에 저장하고,
+  "내 프리셋" 그룹에서 바로 적용. 관리 창에서 적용·갱신(현재 설정으로 덮어쓰기)·삭제. 영상 구간 In/Out과 파일 이름은
+  영상마다 다르므로 저장하지 않음. 다른 기기로 옮길 때는 JSON 내보내기/불러오기 사용.
 - **마스크 모델**: General(DeepLab v3, 테이블·의자 등 배경 사물 제외) / Person(Selfie multiclass).
   배경 Off · Anchor · PIP 추적 박스 중 하나를 처음 켤 때 1회 계산하고, 샘플링이 바뀌면 다시 계산.
 - **내보내기**: 미리보기와 같은 `renderAt(t)`로 프레임마다 렌더 후 인코딩 → 해상도·FPS·길이가 설정값과 정확히 일치.
