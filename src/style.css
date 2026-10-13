@@ -197,3 +197,7 @@ body.busy #left, body.busy #right, body.busy #topbar, body.busy #timeline { poin
 .pd-del:hover { color: var(--c-red); border-color: var(--c-red); }
 .pd-list li.pd-empty { display: block; font-size: 11px; color: var(--c-text-3); background: none; text-align: center; padding: 16px; }
 #preset { width: 170px; }
+.mode-switch { margin-top: 10px; }
+.mode-switch .seg { margin-bottom: 6px; }
+.mode-switch .seg-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+#mode-note:empty { display: none; }

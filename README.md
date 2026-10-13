@@ -36,6 +36,9 @@ npm run build    # 타입 체크 + dist/ 정적 빌드 (Netlify)
 3. **점 튜브** — 면 격자가 점으로 바뀌고, 시간축이 세로로 서며 화면을 채우고, 배경이 종이색 + 그레인으로 바뀐다.
    행(시점)마다 중심을 기준으로 숨 쉬듯 부풀고, 띠가 시간축을 따라 흐른다 (음악 대신 결정론적 노이즈).
 
+- 영상과 GLB를 둘 다 불러오면 Source 패널의 **영상 | GLB** 전환으로 오갈 수 있다. 둘 다 메모리에 유지되고
+  (프레임·마스크 재계산 없음), 모드별로 In/Out 구간과 Duration을 따로 기억한다.
+  피사체 추적·배경 제거·PIP(Subject / Source PIP / Source background)는 영상 모드 전용이라 GLB 모드에서는 숨겨진다.
 - 스키닝은 직접 계산해 영향 본 8개(JOINTS_0/1)까지 반영 (three.js GPU 스키닝은 4개까지). 현재 포즈만 three.js 스키닝 사용.
 - 본 이름은 Mixamo(`mixamorig:LeftArm`), `l_arm_JNT`, `upperarm_l` 등 흔한 규칙을 자동 인식.
 - Draco·Meshopt 압축 GLB 지원 (Draco 디코더는 `public/draco`로 복사해 로컬 제공).

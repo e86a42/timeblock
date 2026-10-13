@@ -183,16 +183,19 @@ async function openFile(file: File) {
   sampleAbort?.abort();
   maskJob?.ac.abort();
   await sampling?.catch(() => {});
+  if (isGlb()) saveMode('glb');
   source?.dispose();
   source = null;
-  store.set('app.mode', 'video');
-  glbStage.root.visible = false;
   try {
     source = await openSource(file);
   } catch (e) {
     setStatus((e as Error).message, true);
     return;
   }
+  switching = true; // the In/Out set below belongs to the new video; resample() runs explicitly
+  store.set('app.mode', 'video');
+  switching = false;
+  applyModeVisibility();
   const d = source.duration;
   setStatus(
     `${file.name}\n${source.width} × ${source.height} · ${d.toFixed(2)}s` +
@@ -203,8 +206,11 @@ async function openFile(file: File) {
     c.input.max = String(d);
     c.input.step = source.fps ? String(1 / source.fps) : '0.01';
   }
+  switching = true;
   store.set('block.inT', 0);
   store.set('block.outT', d);
+  switching = false;
+  if (store.p.export.durationAuto) store.set('export.duration', Math.round(Math.min(60, Math.max(1, d)) * 10) / 10);
   matchFps.classList.toggle('hidden', !source.fps);
   $('#range-section').classList.remove('hidden');
   fitOnNextSample = true;
@@ -214,15 +220,8 @@ async function openFile(file: File) {
 
 // ── GLB source ──────────────────────────────────────────────
 async function openGlb(file: File) {
-  sampleAbort?.abort();
-  maskJob?.ac.abort();
-  await sampling?.catch(() => {});
-  source?.dispose();
-  source = null;
-  fs = null;
-  masks = null;
-  stats = null;
-  pip.setFrames(null);
+  // The video (frames, masks) stays loaded so the 영상/GLB switch can return to it.
+  if (!isGlb()) saveMode('video');
   let info;
   try {
     info = await glbStage.load(file);
@@ -231,8 +230,10 @@ async function openGlb(file: File) {
     setStatus(`GLB를 열 수 없습니다: ${(e as Error).message}`, true);
     return;
   }
+  switching = true;
   store.set('app.mode', 'glb');
-  stack.group.visible = false;
+  switching = false;
+  applyModeVisibility();
   const clip = info.clips[0];
   setStatus(
     `${info.name}\n${info.verts.toLocaleString()} verts · ${Math.round(info.tris).toLocaleString()} tris · ${info.joints} joints\n` +
@@ -242,12 +243,12 @@ async function openGlb(file: File) {
     c.input.max = String(clip.duration);
     c.input.step = String(1 / 30);
   }
+  switching = true;
   store.set('block.inT', 0);
   store.set('block.outT', clip.duration);
+  switching = false;
   if (store.p.export.durationAuto) store.set('export.duration', 16); // room for all three stages
-  matchFps.classList.add('hidden');
   $('#range-section').classList.remove('hidden');
-  $('#thumb-section').classList.add('hidden');
   $('#empty').classList.add('hidden');
   clearTimeout(glbTimer);
   rebuildGlb(true);
@@ -256,6 +257,93 @@ async function openGlb(file: File) {
   if (view === 'free') store.set('camera.view', 'oblique');
   refreshExportState();
 }
+
+// ── 영상 / GLB switch: both sources stay loaded; each mode keeps its own range & timing ──
+type Mode = 'video' | 'glb';
+interface ModeMemory {
+  inT: number;
+  outT: number;
+  duration: number;
+  durationAuto: boolean;
+  status: string;
+  statusWarn: boolean;
+  sampleInfo: string;
+}
+const modeMemory: Partial<Record<Mode, ModeMemory>> = {};
+let switching = false; // suppress resample / rebake while restoring a mode's own values
+
+function saveMode(mode: Mode) {
+  const p = store.p;
+  modeMemory[mode] = {
+    inT: p.block.inT,
+    outT: p.block.outT,
+    duration: p.export.duration,
+    durationAuto: p.export.durationAuto,
+    status: srcInfo.textContent ?? '',
+    statusWarn: srcInfo.classList.contains('warn'),
+    sampleInfo: sampleInfo.textContent ?? '',
+  };
+}
+
+function applyModeVisibility() {
+  const glbMode = isGlb();
+  stack.group.visible = !glbMode && !!fs;
+  glbStage.root.visible = glbMode && !!glbStage.rig;
+  $('#thumb-section').classList.toggle('hidden', glbMode || !fs);
+  matchFps.classList.toggle('hidden', glbMode || !source?.fps);
+  const dur = glbMode ? glbStage.rig?.clip.duration : source?.duration;
+  if (dur) {
+    for (const c of [inCtl, outCtl]) {
+      c.input.max = String(dur);
+      c.input.step = glbMode ? String(1 / 30) : source?.fps ? String(1 / source.fps) : '0.01';
+    }
+  }
+  updateModeSwitch();
+}
+
+function updateModeSwitch() {
+  const both = !!fs && !!glbStage.rig;
+  const glbMode = isGlb();
+  $('#mode-switch').classList.toggle('hidden', !glbMode && !both);
+  document.querySelectorAll<HTMLButtonElement>('#mode-switch .seg-btn').forEach((b) => {
+    b.classList.toggle('active', b.dataset.mode === store.p.app.mode);
+    b.disabled = b.dataset.mode === 'video' ? !fs : !glbStage.rig;
+  });
+  $('#mode-note').textContent = glbMode
+    ? fs
+      ? '피사체 추적 · 배경 제거 · PIP는 영상 모드에서 씁니다 (위에서 전환).'
+      : '피사체 추적 · 배경 제거 · PIP는 영상 모드 기능입니다 — MP4를 불러오면 전환됩니다.'
+    : '';
+}
+
+function switchMode(mode: Mode) {
+  if (mode === store.p.app.mode || exporting) return;
+  if (mode === 'video' ? !fs : !glbStage.rig) return;
+  saveMode(store.p.app.mode);
+  const mem = modeMemory[mode];
+  switching = true;
+  store.set('app.mode', mode);
+  if (mem) {
+    store.set('block.outT', mem.outT);
+    store.set('block.inT', mem.inT);
+    store.set('export.durationAuto', mem.durationAuto);
+    store.set('export.duration', mem.duration);
+  }
+  switching = false;
+  if (mem) {
+    setStatus(mem.status, mem.statusWarn);
+    sampleInfo.textContent = mem.sampleInfo;
+  }
+  applyModeVisibility();
+  const view = store.p.camera.view === 'free' ? 'oblique' : store.p.camera.view;
+  rig.fit(view, mode === 'glb' ? glbStage.size() : stack.size());
+  if (mode === 'video') ensureMasks();
+  refreshMaskNote();
+  refreshExportState();
+}
+document.querySelectorAll<HTMLButtonElement>('#mode-switch .seg-btn').forEach((b) =>
+  b.addEventListener('click', () => switchMode(b.dataset.mode as Mode)),
+);
 
 let glbTimer = 0;
 let glbBakePending = false;
@@ -309,7 +397,7 @@ async function resample() {
       if (view === 'free') store.set('camera.view', 'oblique');
     }
     $('#empty').classList.add('hidden');
-    $('#thumb-section').classList.remove('hidden');
+    applyModeVisibility();
     $('#thumbs').replaceChildren(...next.thumbs);
     const mb = next.data.byteLength / 1048576;
     const srcFrames = sourceFrameCount();
@@ -446,7 +534,7 @@ function previewLoop() {
     rig.controls.update();
     const cur = renderAt(timeline.t);
     overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
-    pip.draw(overlayCtx, overlay.width, overlay.height, store.p, cur, stats);
+    if (!isGlb()) pip.draw(overlayCtx, overlay.width, overlay.height, store.p, cur, stats);
   });
 }
 
@@ -516,7 +604,7 @@ async function runExport() {
       renderFrame: (t, ctx) => {
         const cur = renderAt(t);
         ctx.drawImage(renderer.domElement, 0, 0, w, h); // same task as render: buffer still valid
-        pip.draw(ctx, w, h, p, cur, stats);
+        if (!isGlb()) pip.draw(ctx, w, h, p, cur, stats);
       },
       onProgress: (k, n, eta) =>
         progress.set(ac, k / n, `Encoding ${Math.round((k / n) * 100)}% · ${k}/${n} · 남은 시간 ${Math.ceil(eta)}s`),
@@ -579,6 +667,12 @@ store.on((path) => {
 
   // Clip range: keep In < Out inside the source.
   const dur = (isGlb() ? glbStage.rig?.clip.duration : source?.duration) ?? Infinity;
+  if (switching) {
+    if (/^(canvas\.(aspect|custom|resolution)|export\.)/.test(path)) refreshExportState();
+    stack.apply(p);
+    if (glbStage.rig) glbStage.apply(p);
+    return;
+  }
   if (path === 'block.outT' && p.block.outT > dur) store.set('block.outT', dur);
   if (path === 'block.inT' && p.block.inT > p.block.outT - 0.05) store.set('block.outT', Math.min(dur, p.block.inT + 0.05));
   if (path === 'block.outT' && p.block.outT < p.block.inT + 0.05) store.set('block.inT', Math.max(0, p.block.outT - 0.05));
@@ -588,7 +682,7 @@ store.on((path) => {
   if (/^export\.duration$|^camera\.buildAuto$/.test(path) && p.camera.buildAuto) {
     store.set('camera.buildTime', Math.min(60, p.export.duration));
   }
-  if (path === 'block.frameCount' || (/^block\.(inT|outT)$/.test(path) && source)) scheduleResample();
+  if (!isGlb() && (path === 'block.frameCount' || (/^block\.(inT|outT)$/.test(path) && source))) scheduleResample();
   if (isGlb() && glbStage.rig) {
     if (/^block\.(inT|outT)$|^glb\.ghosts$/.test(path)) scheduleGlb(true);
     else if (/^glb\.(unfold|axis|length|anchor|chain|rows|cols)$/.test(path)) scheduleGlb(false);
