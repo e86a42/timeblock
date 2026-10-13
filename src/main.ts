@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { clamp01, outputSize, store } from './state';
 import { openSource, type FrameStack, type VideoSource } from './io/decode';
 import { defaultFileName, download, encodeSupport, exportQuality, exportVideo } from './io/exportMp4';
-import type { MaskStack } from './vision/segment';
+import type { MaskModel, MaskStack } from './vision/segment';
 import { anchorOffsets, computeStats, type SubjectStats } from './vision/align';
 import { TimeStack } from './scene/stack';
 import { CameraRig } from './scene/camera';
@@ -152,7 +152,8 @@ let masks: MaskStack | null = null;
 let stats: (SubjectStats | null)[] | null = null;
 let sampleAbort: AbortController | null = null;
 let sampling: Promise<unknown> | null = null;
-let maskAbort: AbortController | null = null;
+/** The one mask computation allowed at a time (MediaPipe VIDEO mode is a single stream). */
+let maskJob: { ac: AbortController; fs: FrameStack; model: MaskModel; done: Promise<void> } | null = null;
 let fitOnNextSample = true;
 let resampleTimer = 0;
 let exporting = false;
@@ -180,7 +181,7 @@ async function openFile(file: File) {
     return;
   }
   sampleAbort?.abort();
-  maskAbort?.abort();
+  maskJob?.ac.abort();
   await sampling?.catch(() => {});
   source?.dispose();
   source = null;
@@ -214,7 +215,7 @@ async function openFile(file: File) {
 // ── GLB source ──────────────────────────────────────────────
 async function openGlb(file: File) {
   sampleAbort?.abort();
-  maskAbort?.abort();
+  maskJob?.ac.abort();
   await sampling?.catch(() => {});
   source?.dispose();
   source = null;
@@ -284,7 +285,7 @@ function scheduleResample() {
 async function resample() {
   if (!source) return;
   sampleAbort?.abort();
-  maskAbort?.abort();
+  maskJob?.ac.abort();
   await sampling?.catch(() => {}); // never run two decoders over the same source
   const ac = (sampleAbort = new AbortController());
   const b = store.p.block;
@@ -342,7 +343,7 @@ function needMasks() {
 function refreshMaskNote() {
   const n = refs.maskNote;
   if (masks) n.textContent = `피사체 마스크 준비됨 (${masks.count}프레임)`;
-  else if (maskAbort && !maskAbort.signal.aborted) n.textContent = '피사체 마스크 계산 중…';
+  else if (maskJob && !maskJob.ac.signal.aborted) n.textContent = '피사체 마스크 계산 중…';
   else if (!store.p.canvas.sourceBg && fs) n.textContent = '마스크가 없어 원본 프레임을 표시 중 — 토글을 다시 켜면 재계산';
   else n.textContent = 'Off: MediaPipe 마스크로 피사체만 남깁니다 (첫 전환 시 1회 계산).';
 }
@@ -353,31 +354,51 @@ function updateOffsets() {
 }
 
 async function ensureMasks() {
-  if (!fs || masks || !needMasks() || (maskAbort && !maskAbort.signal.aborted)) return;
-  const target = fs;
+  if (!fs || masks || !needMasks()) return;
   const model = store.p.subject.model;
-  const ac = (maskAbort = new AbortController());
-  progress.show(ac, '피사체 마스크 준비 중…');
-  refreshMaskNote();
-  try {
-    const { computeMasks } = await import('./vision/segment'); // MediaPipe loads on first use
-    const m = await computeMasks(target, model, (r, label) => progress.set(ac, r, label), ac.signal);
-    if (target !== fs || model !== store.p.subject.model) return; // stale result
-    masks = m;
-    stats = computeStats(m);
-    stack.setMasks(m);
-    updateOffsets();
-    stack.apply(store.p);
-  } catch (e) {
-    if ((e as Error).name !== 'AbortError') {
-      console.error(e);
-      setStatus(`마스크 계산 실패: ${(e as Error).message}`, true);
-    }
-  } finally {
-    progress.hide(ac);
-    ac.abort(); // mark finished so a later ensureMasks() may start
-    refreshMaskNote();
+  const running = maskJob && !maskJob.ac.signal.aborted;
+  if (running && maskJob!.fs === fs && maskJob!.model === model) return; // already on it
+  // Frames or model changed under a running job: stop it and wait, so two jobs never
+  // feed the same segmenter. (Previously the old job finished, was dropped as stale,
+  // and nothing recomputed — the stack stayed unmasked.)
+  if (maskJob) {
+    maskJob.ac.abort();
+    await maskJob.done;
   }
+  if (!fs || masks || !needMasks() || (maskJob && !maskJob.ac.signal.aborted)) return; // state moved on
+  const target = fs;
+  const ac = new AbortController();
+  const job = { ac, fs: target, model, done: Promise.resolve() };
+  maskJob = job;
+  let stale = false;
+  job.done = (async () => {
+    progress.show(ac, '피사체 마스크 준비 중…');
+    refreshMaskNote();
+    try {
+      const { computeMasks } = await import('./vision/segment'); // MediaPipe loads on first use
+      const m = await computeMasks(target, model, (r, label) => progress.set(ac, r, label), ac.signal);
+      if (target !== fs || model !== store.p.subject.model) {
+        stale = true;
+        return;
+      }
+      masks = m;
+      stats = computeStats(m);
+      stack.setMasks(m);
+      updateOffsets();
+      stack.apply(store.p);
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') {
+        console.error(e);
+        setStatus(`마스크 계산 실패: ${(e as Error).message}`, true);
+      }
+    } finally {
+      progress.hide(ac);
+      if (maskJob === job) maskJob = null;
+      refreshMaskNote();
+    }
+  })();
+  await job.done;
+  if (stale) ensureMasks(); // result belonged to old frames/model: catch up with the current ones
 }
 
 // ── Rendering (shared by preview and export, deterministic in t) ──

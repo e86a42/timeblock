@@ -20,29 +20,42 @@ const SCENE_CLASSES = new Set(['chair', 'diningtable', 'sofa', 'pottedplant', 't
 // The wasm runtime is copied from node_modules into public/ by scripts/copy-mediapipe.mjs.
 const WASM_BASE = `${import.meta.env.BASE_URL}mediapipe/wasm`;
 
-const segmenters = new Map<MaskModel, Promise<ImageSegmenter>>();
+type Delegate = 'GPU' | 'CPU';
+const segmenters = new Map<string, Promise<ImageSegmenter>>();
 let clock = 0; // VIDEO mode requires strictly increasing timestamps across all calls
 
-function getSegmenter(model: MaskModel) {
-  let s = segmenters.get(model);
+/** Cached segmenter per model; 'GPU' falls back to CPU when the GPU delegate can't start. */
+function getSegmenter(model: MaskModel, delegate: Delegate = 'GPU') {
+  const key = `${model}:${delegate}`;
+  let s = segmenters.get(key);
   if (!s) {
     s = (async () => {
-      const fileset = await FilesetResolver.forVisionTasks(WASM_BASE);
-      const create = (delegate: 'GPU' | 'CPU') =>
+      let fileset;
+      try {
+        fileset = await FilesetResolver.forVisionTasks(WASM_BASE);
+      } catch (e) {
+        throw new Error(`MediaPipe 런타임을 불러오지 못했습니다 (public/mediapipe 확인 — npm run dev로 실행): ${(e as Error).message}`);
+      }
+      const create = (d: Delegate) =>
         ImageSegmenter.createFromOptions(fileset, {
-          baseOptions: { modelAssetPath: MODELS[model], delegate },
+          baseOptions: { modelAssetPath: MODELS[model], delegate: d },
           runningMode: 'VIDEO',
           outputConfidenceMasks: true,
           outputCategoryMask: false,
         });
       try {
-        return await create('GPU');
-      } catch {
-        return await create('CPU');
+        return await create(delegate);
+      } catch (e) {
+        if (delegate === 'CPU') throw e;
+        try {
+          return await create('CPU');
+        } catch (e2) {
+          throw new Error(`세그멘테이션 모델을 불러오지 못했습니다 (네트워크 확인): ${(e2 as Error).message}`);
+        }
       }
     })();
-    s.catch(() => segmenters.delete(model));
-    segmenters.set(model, s);
+    s.catch(() => segmenters.delete(key));
+    segmenters.set(key, s);
   }
   return s;
 }
@@ -61,7 +74,8 @@ export async function computeMasks(
   signal: AbortSignal,
 ): Promise<MaskStack> {
   onProgress(0, '세그멘테이션 모델 로드 중…');
-  const seg = await getSegmenter(model);
+  let seg = await getSegmenter(model);
+  let onCpu = false;
   const { width: w, height: h, count } = fs;
   const out = new Uint8Array(count * w * h);
   const px = w * h;
@@ -73,8 +87,8 @@ export async function computeMasks(
   for (let i = 0; i < count; i++) {
     if (signal.aborted) throw new DOMException('Masking cancelled', 'AbortError');
     const rgba = new Uint8ClampedArray(fs.data.buffer, fs.data.byteOffset + i * px * 4, px * 4);
-    clock += 40;
-    seg.segmentForVideo(new ImageData(rgba, w, h), clock, (res) => {
+    const frame = new ImageData(rgba, w, h);
+    const onResult = (res: { confidenceMasks?: { width: number; height: number; getAsFloat32Array(): Float32Array }[] }) => {
       const masks = res.confidenceMasks ?? [];
       if (!masks.length) return;
       const { width: mw, height: mh } = masks[0];
@@ -94,7 +108,20 @@ export async function computeMasks(
           dst[y * w + x] = Math.max(0, Math.min(1, v)) * 255;
         }
       }
-    });
+    };
+    clock += 40;
+    try {
+      seg.segmentForVideo(frame, clock, onResult);
+    } catch (e) {
+      // The GPU path can fail mid-run (e.g. its WebGL context was lost): retry once on CPU.
+      if (onCpu) throw e;
+      console.warn('Segmenter GPU path failed, retrying on CPU:', e);
+      segmenters.delete(`${model}:GPU`);
+      seg = await getSegmenter(model, 'CPU');
+      onCpu = true;
+      clock += 40;
+      seg.segmentForVideo(frame, clock, onResult);
+    }
     onProgress((i + 1) / count, `피사체 마스크 계산 ${i + 1}/${count}`);
     if (i % 4 === 3) await new Promise((r) => setTimeout(r)); // keep the UI responsive
   }
