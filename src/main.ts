@@ -10,8 +10,11 @@ import { CameraRig } from './scene/camera';
 import { Pip } from './scene/pip';
 import { buildPanel } from './ui/panel';
 import { Timeline } from './ui/timeline';
-import { slider, toggle } from './ui/controls';
+import { showIf, slider, toggle } from './ui/controls';
 import { bindPresetMenu } from './ui/presets';
+import { GlbStage } from './glb/stage';
+import grainVert from './glb/shaders/grain.vert?raw';
+import grainFrag from './glb/shaders/grain.frag?raw';
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
 
@@ -30,10 +33,23 @@ scene.add(stack.group);
 const rig = new CameraRig(canvas);
 rig.controls.addEventListener('start', () => store.set('camera.view', 'free'));
 const pip = new Pip();
+const glbStage = new GlbStage();
+scene.add(glbStage.root);
+
+// Paper grain: a full-screen pass drawn last (video mode: Canvas › Grain; GLB: fades in with points).
+const grainU = { uGrain: { value: 0 }, uTime: { value: 0 }, uRes: { value: new THREE.Vector2(1, 1) } };
+const grain = new THREE.Mesh(
+  new THREE.PlaneGeometry(1, 1),
+  new THREE.ShaderMaterial({ vertexShader: grainVert, fragmentShader: grainFrag, uniforms: grainU, transparent: true, depthTest: false, depthWrite: false }),
+);
+grain.frustumCulled = false;
+grain.renderOrder = 1000;
+scene.add(grain);
 
 const refs = buildPanel($('#right'));
 const timeline = new Timeline($('#timeline'));
 toggle($('#tl-pip'), '원본 PIP', 'pip.enabled');
+showIf($('#tl-pip'), () => store.p.app.mode === 'video');
 
 // ── Viewport: largest box of the output aspect that fits the stage (WYSIWYG) ──
 const stage = $('#stage');
@@ -74,6 +90,23 @@ function applyBackground() {
   gradTex = new THREE.CanvasTexture(g);
   gradTex.colorSpace = THREE.SRGBColorSpace;
   scene.background = gradTex;
+}
+
+/** GLB points stage: blend the background toward paper (m = morph 0–1). */
+const bgMix = new THREE.Color();
+let bgOverridden = false;
+function blendBackground(m: number) {
+  if (m <= 0) {
+    if (bgOverridden) {
+      bgOverridden = false;
+      applyBackground();
+    }
+    return;
+  }
+  const c = store.p.canvas;
+  bgMix.set(c.gradient ? c.gradBottom : c.bgColor).lerp(new THREE.Color(store.p.glb.paperColor), m);
+  scene.background = bgMix;
+  bgOverridden = true;
 }
 
 // ── Progress overlay (one job at a time owns it) ────────────
@@ -137,7 +170,11 @@ function sourceFrameCount() {
   return Math.round((outT - inT) * source.fps) + 1;
 }
 
+const isGlb = () => store.p.app.mode === 'glb';
+const hasSource = () => (isGlb() ? !!glbStage.rig : !!fs);
+
 async function openFile(file: File) {
+  if (/\.glb$/i.test(file.name)) return openGlb(file);
   if (!file.type.startsWith('video/') && !/\.(mp4|m4v|mov|webm)$/i.test(file.name)) {
     setStatus('영상 파일(MP4)만 지원합니다.', true);
     return;
@@ -147,6 +184,8 @@ async function openFile(file: File) {
   await sampling?.catch(() => {});
   source?.dispose();
   source = null;
+  store.set('app.mode', 'video');
+  glbStage.root.visible = false;
   try {
     source = await openSource(file);
   } catch (e) {
@@ -170,6 +209,71 @@ async function openFile(file: File) {
   fitOnNextSample = true;
   clearTimeout(resampleTimer);
   resample();
+}
+
+// ── GLB source ──────────────────────────────────────────────
+async function openGlb(file: File) {
+  sampleAbort?.abort();
+  maskAbort?.abort();
+  await sampling?.catch(() => {});
+  source?.dispose();
+  source = null;
+  fs = null;
+  masks = null;
+  stats = null;
+  pip.setFrames(null);
+  let info;
+  try {
+    info = await glbStage.load(file);
+  } catch (e) {
+    console.error(e);
+    setStatus(`GLB를 열 수 없습니다: ${(e as Error).message}`, true);
+    return;
+  }
+  store.set('app.mode', 'glb');
+  stack.group.visible = false;
+  const clip = info.clips[0];
+  setStatus(
+    `${info.name}\n${info.verts.toLocaleString()} verts · ${Math.round(info.tris).toLocaleString()} tris · ${info.joints} joints\n` +
+      `클립 "${clip.name}" ${clip.duration.toFixed(2)}s · 높이 ${info.height.toFixed(2)}`,
+  );
+  for (const c of [inCtl, outCtl]) {
+    c.input.max = String(clip.duration);
+    c.input.step = String(1 / 30);
+  }
+  store.set('block.inT', 0);
+  store.set('block.outT', clip.duration);
+  if (store.p.export.durationAuto) store.set('export.duration', 16); // room for all three stages
+  matchFps.classList.add('hidden');
+  $('#range-section').classList.remove('hidden');
+  $('#thumb-section').classList.add('hidden');
+  $('#empty').classList.add('hidden');
+  clearTimeout(glbTimer);
+  rebuildGlb(true);
+  const view = store.p.camera.view;
+  rig.fit(view === 'free' ? 'oblique' : view, glbStage.size());
+  if (view === 'free') store.set('camera.view', 'oblique');
+  refreshExportState();
+}
+
+let glbTimer = 0;
+let glbBakePending = false;
+function rebuildGlb(bake: boolean) {
+  if (!glbStage.rig) return;
+  const t0 = performance.now();
+  if (bake) glbStage.rebake(store.p);
+  else glbStage.relayout(store.p);
+  const g = store.p.glb;
+  sampleInfo.textContent = `고스트 ${Math.round(g.ghosts)} · 행 ${Math.round(g.rows)} × ${Math.round(g.cols)} · ${Math.round(performance.now() - t0)}ms`;
+  sampleInfo.classList.remove('warn');
+}
+function scheduleGlb(bake: boolean) {
+  glbBakePending ||= bake;
+  clearTimeout(glbTimer);
+  glbTimer = window.setTimeout(() => {
+    rebuildGlb(glbBakePending);
+    glbBakePending = false;
+  }, 250);
 }
 
 function scheduleResample() {
@@ -285,7 +389,24 @@ function playhead(t: number) {
   return { u, cur: build * n };
 }
 
+const bufSize = new THREE.Vector2();
 function renderAt(t: number) {
+  renderer.getDrawingBufferSize(bufSize);
+  grainU.uRes.value.copy(bufSize);
+  grainU.uTime.value = t;
+  if (isGlb()) {
+    const p = store.p;
+    const restore = rig.animate(clamp01(t / p.export.duration), p, glbStage.root);
+    const s = glbStage.update(t, p, rig.camera, bufSize.y, rig.controls.target);
+    const m = s.morph * s.morph * (3 - 2 * s.morph);
+    blendBackground(m);
+    grainU.uGrain.value = p.canvas.grain + (p.glb.paperGrain - p.canvas.grain) * m;
+    renderer.render(scene, rig.camera);
+    restore();
+    return 0;
+  }
+  blendBackground(0);
+  grainU.uGrain.value = store.p.canvas.grain;
   const { u, cur } = playhead(t);
   const restore = rig.animate(u, store.p, stack.group);
   stack.group.updateMatrixWorld();
@@ -331,14 +452,14 @@ function refreshExportState() {
     refs.exportNote.classList.toggle('warn', !!reason);
     const blocked = !!reason && !fallback;
     for (const b of exportButtons) {
-      b.disabled = !fs || exporting || blocked;
-      b.title = blocked ? reason : !fs ? '먼저 영상을 불러오세요' : '';
+      b.disabled = !hasSource() || exporting || blocked;
+      b.title = blocked ? reason : !hasSource() ? '먼저 영상이나 GLB를 불러오세요' : '';
     }
   }, 120);
 }
 
 async function runExport() {
-  if (!fs || exporting) return;
+  if (!hasSource() || exporting) return;
   const p = store.p;
   const { w, h } = outputSize(p.canvas);
   const sup = await encodeSupport(w, h, p.export.fps);
@@ -430,20 +551,28 @@ store.on((path) => {
   if (/^canvas\.(aspect|custom|resolution)/.test(path)) layout();
   if (/^canvas\.(bgColor|grad)/.test(path)) applyBackground();
   if (path === 'camera.projection' || path === 'camera.fov') rig.setProjection(p.camera.projection, p.camera.fov);
-  if (path === 'camera.view' && p.camera.view !== 'free' && stack.count) rig.fit(p.camera.view, stack.size());
+  if (path === 'camera.view' && p.camera.view !== 'free') {
+    if (isGlb() && glbStage.rig) rig.fit(p.camera.view, glbStage.size());
+    else if (stack.count) rig.fit(p.camera.view, stack.size());
+  }
 
   // Clip range: keep In < Out inside the source.
-  const dur = source?.duration ?? Infinity;
+  const dur = (isGlb() ? glbStage.rig?.clip.duration : source?.duration) ?? Infinity;
   if (path === 'block.outT' && p.block.outT > dur) store.set('block.outT', dur);
   if (path === 'block.inT' && p.block.inT > p.block.outT - 0.05) store.set('block.outT', Math.min(dur, p.block.inT + 0.05));
   if (path === 'block.outT' && p.block.outT < p.block.inT + 0.05) store.set('block.inT', Math.max(0, p.block.outT - 0.05));
-  if (/^block\.(inT|outT)$|^export\.durationAuto$/.test(path) && p.export.durationAuto) {
+  if (/^block\.(inT|outT)$|^export\.durationAuto$/.test(path) && p.export.durationAuto && !isGlb()) {
     store.set('export.duration', Math.round(Math.min(60, Math.max(1, p.block.outT - p.block.inT)) * 10) / 10);
   }
   if (/^export\.duration$|^camera\.buildAuto$/.test(path) && p.camera.buildAuto) {
     store.set('camera.buildTime', Math.min(60, p.export.duration));
   }
   if (path === 'block.frameCount' || (/^block\.(inT|outT)$/.test(path) && source)) scheduleResample();
+  if (isGlb() && glbStage.rig) {
+    if (/^block\.(inT|outT)$|^glb\.ghosts$/.test(path)) scheduleGlb(true);
+    else if (/^glb\.(unfold|axis|length|anchor|chain|rows|cols)$/.test(path)) scheduleGlb(false);
+    else glbStage.apply(p);
+  }
 
   if (path === 'subject.model' && masks) {
     masks = null;
@@ -470,4 +599,4 @@ refreshExportState();
 previewLoop();
 
 // Dev handle for debugging in the console.
-Object.assign(window, { __tb: { store, stack, rig, renderer, openFile, runExport } });
+Object.assign(window, { __tb: { store, stack, glbStage, rig, renderer, openFile, runExport, renderAt, layout } });

@@ -8,9 +8,9 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "postinstall": "node scripts/copy-mediapipe.mjs",
-    "predev": "node scripts/copy-mediapipe.mjs",
-    "prebuild": "node scripts/copy-mediapipe.mjs"
+    "postinstall": "node scripts/copy-runtimes.mjs",
+    "predev": "node scripts/copy-runtimes.mjs",
+    "prebuild": "node scripts/copy-runtimes.mjs"
   },
   "keywords": [],
   "author": "",

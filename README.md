@@ -25,12 +25,31 @@ npm run build    # 타입 체크 + dist/ 정적 빌드 (Netlify)
 | M5 | Anchor 정렬, 카메라 애니메이션, 원본 PIP + 추적 박스, 프리셋 | 완료 |
 | P2 | 깊이 기반 적층, Unfold, PNG/OBJ 내보내기 | 미착수 |
 
+## GLB 모드 (ROM.VIZ 스타일 → 레퍼런스 스타일 전환)
+
+애니메이션이 있는 리깅된 GLB를 놓으면 GLB 모드로 바뀌고, 한 장면에서 세 단계가 이어진다 (Sequence 섹션에서 초 단위 조절).
+
+1. **고스트 적층** — 클립을 일정 간격으로 샘플링한 포즈를 하나의 메시로 굳혀 Unfold 축을 따라 배치.
+   TimeBlock의 Opacity·Falloff·Color over time·Blend·Build-up이 그대로 적용되고, 현재 포즈(텍스처)가 스택을 따라 움직임.
+2. **면 형성** — 스윕 평면이 시간축을 지나가며 관절 경로선을 그리고, 체인 단면을 한 줄씩 이어 면을 만든다
+   (Silhouette loop 체인은 닫힌 고리라 튜브가 됨).
+3. **점 튜브** — 면 격자가 점으로 바뀌고, 시간축이 세로로 서며 화면을 채우고, 배경이 종이색 + 그레인으로 바뀐다.
+   행(시점)마다 중심을 기준으로 숨 쉬듯 부풀고, 띠가 시간축을 따라 흐른다 (음악 대신 결정론적 노이즈).
+
+- 스키닝은 직접 계산해 영향 본 8개(JOINTS_0/1)까지 반영 (three.js GPU 스키닝은 4개까지). 현재 포즈만 three.js 스키닝 사용.
+- 본 이름은 Mixamo(`mixamorig:LeftArm`), `l_arm_JNT`, `upperarm_l` 등 흔한 규칙을 자동 인식.
+- Draco·Meshopt 압축 GLB 지원 (Draco 디코더는 `public/draco`로 복사해 로컬 제공).
+- 출력은 영상 모드와 같은 `renderAt(t)` 경로라 미리보기와 MP4가 프레임 단위로 일치.
+
 ## 구조
 
 ```
 src/
 ├─ main.ts             앱 연결: 샘플링 → 마스크 → 정렬 → 렌더, 미리보기/내보내기 공용 renderAt(t)
 ├─ state.ts            모든 파라미터의 단일 상태 저장소, 출력 해상도, Intensity 스케일
+├─ glb/rig.ts          GLB 로드, 본/체인 인식, 포즈 샘플링, 8-influence 고스트 베이크
+├─ glb/stage.ts        고스트 → 경로/면 → 점 튜브 단계와 시퀀서
+├─ glb/shaders/        ghost · surface · lines · points · grain(종이 질감)
 ├─ io/decode.ts        Mediabunny(WebCodecs) 프레임 샘플링, 실패 시 <video> 시크로 대체
 ├─ io/exportMp4.ts     오프라인 렌더 → CanvasSource → MP4(H.264) / WebM(VP9)
 ├─ vision/segment.ts   MediaPipe Image Segmenter (VIDEO 모드), 첫 사용 시 지연 로드

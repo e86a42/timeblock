@@ -4,3 +4,4 @@ public/dev
 .DS_Store
 public/mediapipe
 .claude/
+public/draco

@@ -5,6 +5,9 @@ export type Aspect = '16:9' | '9:16' | '1:1' | '4:5' | '21:9' | 'custom';
 export type ViewPreset = 'front' | 'side' | 'oblique' | 'top' | 'free';
 
 export const DEFAULTS = {
+  app: {
+    mode: 'video' as 'video' | 'glb', // set by the loaded file; never part of a preset
+  },
   canvas: {
     aspect: '9:16' as Aspect,
     customW: 1080,
@@ -15,6 +18,7 @@ export const DEFAULTS = {
     gradTop: '#1A1F2B',
     gradBottom: '#0B0D10',
     sourceBg: true, // On = full frame planes, Off = subject only
+    grain: 0, // paper grain overlay amount
   },
   block: {
     intensity: 0.6,
@@ -59,6 +63,38 @@ export const DEFAULTS = {
     buildTime: 5, // seconds until the block is complete (then it holds)
     buildAuto: true, // follows Duration until the user edits it
   },
+  glb: {
+    ghosts: 40, // baked poses in the stack
+    unfold: 'linear' as 'linear' | 'none',
+    axis: 'x' as 'x' | 'y' | 'z',
+    length: 3, // unfold length in figure heights
+    anchor: 'hips' as 'none' | 'hips' | 'ground',
+    chain: 'loop' as 'loop' | 'arms' | 'legs' | 'spine' | 'all',
+    ghostColor: '#AEB4BD',
+    shading: 0.6, // headlight shading on ghosts
+    heroTextured: true,
+    rows: 160, // surface / point rows along time
+    cols: 48, // points per row
+    surfaceColor: '#9C9A93',
+    surfaceOpacity: 0.35,
+    lineColor: '#FF6B2B',
+    // Sequence (seconds)
+    stage: 'sequence' as 'sequence' | 'ghost' | 'surface' | 'points',
+    buildEnd: 4,
+    sweepStart: 4.5,
+    sweepDur: 4,
+    morphStart: 9.5,
+    morphDur: 2.5,
+    // Points stage (reference look)
+    dotSize: 0.012, // figure heights
+    inkColor: '#151515',
+    paperColor: '#E4E3DF',
+    paperGrain: 0.6,
+    breathAmp: 0.18,
+    breathSpeed: 1.2,
+    breathFreq: 3, // bands along the time axis
+    vertical: true, // stand the time axis upright in the points stage
+  },
   pip: {
     enabled: false,
     corner: 'tl' as 'tl' | 'tr' | 'bl' | 'br',
@@ -101,7 +137,7 @@ class Store {
   load(src: unknown, base: any = DEFAULTS, prefix = '') {
     if (!src || typeof src !== 'object') return;
     for (const [k, v] of Object.entries(src as Record<string, unknown>)) {
-      if (!(k in base)) continue;
+      if (!(k in base) || (!prefix && k === 'app')) continue;
       const path = prefix + k;
       if (typeof base[k] === 'object') this.load(v, base[k], `${path}.`);
       else if (typeof v === typeof base[k]) this.set(path, v);
