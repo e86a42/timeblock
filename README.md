@@ -11,6 +11,9 @@ npm run dev      # http://localhost:5173
 npm run build    # 타입 체크 + dist/ 정적 빌드 (Netlify)
 ```
 
+배포: https://e86a42.github.io/timeblock/ — `main`에 푸시하면 GitHub Actions(`.github/workflows/deploy.yml`)가
+`BASE_PATH=/timeblock/`로 빌드해 GitHub Pages에 올린다.
+
 데스크톱 Chrome/Edge, 최소 너비 1280px.
 조작: 우클릭 드래그 회전 · 휠 줌 · 중클릭 이동 · Space 재생/정지.
 
